@@ -7,16 +7,16 @@
 // except according to those terms.
 
 #![feature(custom_attribute, plugin)]
-#![plugin(pnet_macros)]
+#![plugin(pnet_macros_plugin)]
 
 extern crate pnet;
 
 #[packet]
 pub struct PacketWithPayload {
     banana: u8,
-    var_length: Vec<u8>, //~ ERROR: variable length field must have #[length = ""] or #[length_fn = ""] attribute
+    var_length: Vec<u8>, /* ~ ERROR: variable length field must have #[length = ""] or #[length_fn = ""] attribute */
     #[payload]
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 fn main() {}

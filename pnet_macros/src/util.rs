@@ -13,7 +13,8 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
     Big,
-    Little
+    Little,
+    Host,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,9 +30,9 @@ impl fmt::Display for GetOperation {
         let shift = (self.shiftr as i16) - (self.shiftl as i16);
 
         let mask_str = if should_mask {
-            format!("({{}} & 0x{})", fmt::radix(self.mask, 16))
+            format!("({{}} & 0x{})", radix16_u8(self.mask))
         } else {
-            "{}".to_string()
+            "{}".to_owned()
         };
 
         if shift == 0 {
@@ -48,11 +49,41 @@ impl fmt::Display for GetOperation {
 fn test_display_get_operation() {
     type Op = GetOperation;
 
-    assert_eq!(Op { mask: 0b00001111, shiftl: 2, shiftr: 0 }.to_string(), "({} & 0xf) << 2");
-    assert_eq!(Op { mask: 0b00001111, shiftl: 2, shiftr: 2 }.to_string(), "({} & 0xf)");
-    assert_eq!(Op { mask: 0b00001111, shiftl: 0, shiftr: 2 }.to_string(), "({} & 0xf) >> 2");
-    assert_eq!(Op { mask: 0b11111111, shiftl: 0, shiftr: 2 }.to_string(), "{} >> 2");
-    assert_eq!(Op { mask: 0b11111111, shiftl: 3, shiftr: 1 }.to_string(), "{} << 2");
+    assert_eq!(Op {
+                       mask: 0b00001111,
+                       shiftl: 2,
+                       shiftr: 0,
+                   }
+                   .to_string(),
+               "({} & 0xf) << 2");
+    assert_eq!(Op {
+                       mask: 0b00001111,
+                       shiftl: 2,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "({} & 0xf)");
+    assert_eq!(Op {
+                       mask: 0b00001111,
+                       shiftl: 0,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "({} & 0xf) >> 2");
+    assert_eq!(Op {
+                       mask: 0b11111111,
+                       shiftl: 0,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "{} >> 2");
+    assert_eq!(Op {
+                       mask: 0b11111111,
+                       shiftl: 3,
+                       shiftr: 1,
+                   }
+                   .to_string(),
+               "{} << 2");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +98,34 @@ pub struct SetOperation {
     shiftr: u8,
 }
 
+macro_rules! radix_fn {
+    ($name:ident, $ty:ty) => {
+        fn $name(mut val: $ty) -> String
+        {
+            let mut ret = String::new();
+            let vals = "0123456789abcdef".as_bytes();
+            while val > 0 {
+                let remainder = val % 16;
+                val /= 16;
+                ret = format!("{}{}", vals[remainder as usize] as char, ret);
+            }
+
+            ret
+        }
+
+        mod $name {
+            #[test]
+            fn test() {
+                assert_eq!(super::$name(0xab), "ab".to_owned());
+                assert_eq!(super::$name(0x1c), "1c".to_owned());
+            }
+        }
+    }
+}
+
+radix_fn!(radix16_u8, u8);
+radix_fn!(radix16_u64, u64);
+
 impl fmt::Display for SetOperation {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let should_mask = self.value_mask != 0xFF;
@@ -74,15 +133,15 @@ impl fmt::Display for SetOperation {
         let shift = (self.shiftr as i16) - (self.shiftl as i16);
 
         let save_str = if should_save {
-            format!("({{packet}} & 0x{})", fmt::radix(self.save_mask, 16))
+            format!("({{packet}} & 0x{})", radix16_u8(self.save_mask))
         } else {
-            "".to_string()
+            "".to_owned()
         };
 
         let mask_str = if should_mask {
-            format!("({{val}} & 0x{})", fmt::radix(self.value_mask, 16))
+            format!("({{val}} & 0x{})", radix16_u64(self.value_mask))
         } else {
-            "{val}".to_string()
+            "{val}".to_owned()
         };
 
         let shift_str = if shift == 0 {
@@ -94,7 +153,10 @@ impl fmt::Display for SetOperation {
         };
 
         if should_save {
-            write!(fmt, "{{packet}} = ({} | ({}) as u8) as u8", save_str, shift_str)
+            write!(fmt,
+                   "{{packet}} = ({} | ({}) as u8) as u8",
+                   save_str,
+                   shift_str)
         } else {
             write!(fmt, "{{packet}} = ({}) as u8", shift_str)
         }
@@ -105,11 +167,46 @@ impl fmt::Display for SetOperation {
 fn test_display_set_operation() {
     type Sop = SetOperation;
 
-    assert_eq!(Sop { save_mask: 0b00000011, value_mask: 0b00001111, shiftl: 2, shiftr: 0 }.to_string(), "{packet} = (({packet} & 0x3) | (({val} & 0xf) << 2) as u8) as u8");
-    assert_eq!(Sop { save_mask: 0b11000000, value_mask: 0b00001111, shiftl: 2, shiftr: 2 }.to_string(), "{packet} = (({packet} & 0xc0) | (({val} & 0xf)) as u8) as u8");
-    assert_eq!(Sop { save_mask: 0b00011100, value_mask: 0b00001111, shiftl: 0, shiftr: 2 }.to_string(), "{packet} = (({packet} & 0x1c) | (({val} & 0xf) >> 2) as u8) as u8");
-    assert_eq!(Sop { save_mask: 0b00000000, value_mask: 0b11111111, shiftl: 0, shiftr: 2 }.to_string(), "{packet} = ({val} >> 2) as u8");
-    assert_eq!(Sop { save_mask: 0b00000011, value_mask: 0b11111111, shiftl: 3, shiftr: 1 }.to_string(), "{packet} = (({packet} & 0x3) | ({val} << 2) as u8) as u8");
+    assert_eq!(Sop {
+                       save_mask: 0b00000011,
+                       value_mask: 0b00001111,
+                       shiftl: 2,
+                       shiftr: 0,
+                   }
+                   .to_string(),
+               "{packet} = (({packet} & 0x3) | (({val} & 0xf) << 2) as u8) as u8");
+    assert_eq!(Sop {
+                       save_mask: 0b11000000,
+                       value_mask: 0b00001111,
+                       shiftl: 2,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "{packet} = (({packet} & 0xc0) | (({val} & 0xf)) as u8) as u8");
+    assert_eq!(Sop {
+                       save_mask: 0b00011100,
+                       value_mask: 0b00001111,
+                       shiftl: 0,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "{packet} = (({packet} & 0x1c) | (({val} & 0xf) >> 2) as u8) as u8");
+    assert_eq!(Sop {
+                       save_mask: 0b00000000,
+                       value_mask: 0b11111111,
+                       shiftl: 0,
+                       shiftr: 2,
+                   }
+                   .to_string(),
+               "{packet} = ({val} >> 2) as u8");
+    assert_eq!(Sop {
+                       save_mask: 0b00000011,
+                       value_mask: 0b11111111,
+                       shiftl: 3,
+                       shiftr: 1,
+                   }
+                   .to_string(),
+               "{packet} = (({packet} & 0x3) | ({val} << 2) as u8) as u8");
 }
 
 /// Gets a mask to get bits_remaining bits from offset bits into a byte
@@ -117,11 +214,7 @@ fn test_display_set_operation() {
 fn get_mask(offset: usize, bits_remaining: usize) -> (usize, u8) {
     fn bits_remaining_in_byte(offset: usize, bits_remaining: usize) -> usize {
         fn round_down(max_val: usize, val: usize) -> usize {
-            if val > max_val {
-                max_val
-            } else {
-                val
-            }
+            if val > max_val { max_val } else { val }
         }
         if (bits_remaining / 8) >= 1 {
             8 - offset
@@ -185,7 +278,7 @@ fn get_shiftl(offset: usize, size: usize, byte_number: usize, num_bytes: usize) 
 
         let ret = base_shift + (8 * bytes_to_shift);
 
-        //(ret % 8) as u8
+        // (ret % 8) as u8
         ret as u8
     }
 }
@@ -255,7 +348,7 @@ fn test_get_shiftr() {
     assert_eq!(get_shiftr(0, 35, 4, 5), 5);
 }
 
-/// Given an offset (number of bits into a chunk of memory), retreive a list of operations to get
+/// Given an offset (number of bits into a chunk of memory), retrieve a list of operations to get
 /// size bits.
 ///
 /// Assumes big endian, and that each byte will be masked, then cast to the next power of two
@@ -267,10 +360,10 @@ pub fn operations(offset: usize, size: usize) -> Option<Vec<GetOperation>> {
 
     let num_full_bytes = size / 8;
     let num_bytes = if offset > 0 || size % 8 != 0 {
-                        num_full_bytes + 1
-                    } else {
-                        num_full_bytes
-                    };
+        num_full_bytes + 1
+    } else {
+        num_full_bytes
+    };
 
     let mut current_offset = offset;
     let mut num_bits_remaining = size;
@@ -294,40 +387,172 @@ pub fn operations(offset: usize, size: usize) -> Option<Vec<GetOperation>> {
 #[test]
 fn operations_test() {
     type Op = GetOperation;
-    assert_eq!(operations(0, 1).unwrap(), vec!(Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }));
-    assert_eq!(operations(0, 2).unwrap(), vec!(Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }));
-    assert_eq!(operations(0, 3).unwrap(), vec!(Op { mask: 0b11100000, shiftl: 0, shiftr: 5 }));
-    assert_eq!(operations(0, 4).unwrap(), vec!(Op { mask: 0b11110000, shiftl: 0, shiftr: 4 }));
-    assert_eq!(operations(0, 5).unwrap(), vec!(Op { mask: 0b11111000, shiftl: 0, shiftr: 3 }));
-    assert_eq!(operations(0, 6).unwrap(), vec!(Op { mask: 0b11111100, shiftl: 0, shiftr: 2 }));
-    assert_eq!(operations(0, 7).unwrap(), vec!(Op { mask: 0b11111110, shiftl: 0, shiftr: 1 }));
-    assert_eq!(operations(0, 8).unwrap(), vec!(Op { mask: 0b11111111, shiftl: 0, shiftr: 0 }));
-    assert_eq!(operations(0, 9).unwrap(), vec!(Op { mask: 0b11111111, shiftl: 1, shiftr: 0 },
-                                               Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }));
-    assert_eq!(operations(0, 10).unwrap(), vec!(Op { mask: 0b11111111, shiftl: 2, shiftr: 0 },
-                                                Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }));
+    assert_eq!(operations(0, 1).unwrap(),
+               vec![Op {
+                        mask: 0b10000000,
+                        shiftl: 0,
+                        shiftr: 7,
+                    }]);
+    assert_eq!(operations(0, 2).unwrap(),
+               vec![Op {
+                        mask: 0b11000000,
+                        shiftl: 0,
+                        shiftr: 6,
+                    }]);
+    assert_eq!(operations(0, 3).unwrap(),
+               vec![Op {
+                        mask: 0b11100000,
+                        shiftl: 0,
+                        shiftr: 5,
+                    }]);
+    assert_eq!(operations(0, 4).unwrap(),
+               vec![Op {
+                        mask: 0b11110000,
+                        shiftl: 0,
+                        shiftr: 4,
+                    }]);
+    assert_eq!(operations(0, 5).unwrap(),
+               vec![Op {
+                        mask: 0b11111000,
+                        shiftl: 0,
+                        shiftr: 3,
+                    }]);
+    assert_eq!(operations(0, 6).unwrap(),
+               vec![Op {
+                        mask: 0b11111100,
+                        shiftl: 0,
+                        shiftr: 2,
+                    }]);
+    assert_eq!(operations(0, 7).unwrap(),
+               vec![Op {
+                        mask: 0b11111110,
+                        shiftl: 0,
+                        shiftr: 1,
+                    }]);
+    assert_eq!(operations(0, 8).unwrap(),
+               vec![Op {
+                        mask: 0b11111111,
+                        shiftl: 0,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(operations(0, 9).unwrap(),
+               vec![Op {
+                        mask: 0b11111111,
+                        shiftl: 1,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b10000000,
+                        shiftl: 0,
+                        shiftr: 7,
+                    }]);
+    assert_eq!(operations(0, 10).unwrap(),
+               vec![Op {
+                        mask: 0b11111111,
+                        shiftl: 2,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11000000,
+                        shiftl: 0,
+                        shiftr: 6,
+                    }]);
 
-    assert_eq!(operations(1, 1).unwrap(), vec!(Op { mask: 0b01000000, shiftl: 0, shiftr: 6 }));
-    assert_eq!(operations(1, 2).unwrap(), vec!(Op { mask: 0b01100000, shiftl: 0, shiftr: 5 }));
-    assert_eq!(operations(1, 3).unwrap(), vec!(Op { mask: 0b01110000, shiftl: 0, shiftr: 4 }));
-    assert_eq!(operations(1, 4).unwrap(), vec!(Op { mask: 0b01111000, shiftl: 0, shiftr: 3 }));
-    assert_eq!(operations(1, 5).unwrap(), vec!(Op { mask: 0b01111100, shiftl: 0, shiftr: 2 }));
-    assert_eq!(operations(1, 6).unwrap(), vec!(Op { mask: 0b01111110, shiftl: 0, shiftr: 1 }));
-    assert_eq!(operations(1, 7).unwrap(), vec!(Op { mask: 0b01111111, shiftl: 0, shiftr: 0 }));
-    assert_eq!(operations(1, 8).unwrap(), vec!(Op { mask: 0b01111111, shiftl: 1, shiftr: 0 },
-                                               Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }));
-    assert_eq!(operations(1, 9).unwrap(), vec!(Op { mask: 0b01111111, shiftl: 2, shiftr: 0 },
-                                               Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }));
+    assert_eq!(operations(1, 1).unwrap(),
+               vec![Op {
+                        mask: 0b01000000,
+                        shiftl: 0,
+                        shiftr: 6,
+                    }]);
+    assert_eq!(operations(1, 2).unwrap(),
+               vec![Op {
+                        mask: 0b01100000,
+                        shiftl: 0,
+                        shiftr: 5,
+                    }]);
+    assert_eq!(operations(1, 3).unwrap(),
+               vec![Op {
+                        mask: 0b01110000,
+                        shiftl: 0,
+                        shiftr: 4,
+                    }]);
+    assert_eq!(operations(1, 4).unwrap(),
+               vec![Op {
+                        mask: 0b01111000,
+                        shiftl: 0,
+                        shiftr: 3,
+                    }]);
+    assert_eq!(operations(1, 5).unwrap(),
+               vec![Op {
+                        mask: 0b01111100,
+                        shiftl: 0,
+                        shiftr: 2,
+                    }]);
+    assert_eq!(operations(1, 6).unwrap(),
+               vec![Op {
+                        mask: 0b01111110,
+                        shiftl: 0,
+                        shiftr: 1,
+                    }]);
+    assert_eq!(operations(1, 7).unwrap(),
+               vec![Op {
+                        mask: 0b01111111,
+                        shiftl: 0,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(operations(1, 8).unwrap(),
+               vec![Op {
+                        mask: 0b01111111,
+                        shiftl: 1,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b10000000,
+                        shiftl: 0,
+                        shiftr: 7,
+                    }]);
+    assert_eq!(operations(1, 9).unwrap(),
+               vec![Op {
+                        mask: 0b01111111,
+                        shiftl: 2,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11000000,
+                        shiftl: 0,
+                        shiftr: 6,
+                    }]);
 
     assert_eq!(operations(8, 1), None);
     assert_eq!(operations(3, 0), None);
     assert_eq!(operations(3, 65), None);
 
-    assert_eq!(operations(3, 33).unwrap(), vec!(Op { mask: 0b00011111, shiftl: 28, shiftr: 0 },
-                                                Op { mask: 0b11111111, shiftl: 20, shiftr: 0 },
-                                                Op { mask: 0b11111111, shiftl: 12, shiftr: 0 },
-                                                Op { mask: 0b11111111, shiftl: 4, shiftr: 0 },
-                                                Op { mask: 0b11110000, shiftl: 0, shiftr: 4 }));
+    assert_eq!(operations(3, 33).unwrap(),
+               vec![Op {
+                        mask: 0b00011111,
+                        shiftl: 28,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11111111,
+                        shiftl: 20,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11111111,
+                        shiftl: 12,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11111111,
+                        shiftl: 4,
+                        shiftr: 0,
+                    },
+                    Op {
+                        mask: 0b11110000,
+                        shiftl: 0,
+                        shiftr: 4,
+                    }]);
 }
 
 /// Mask `bits` bits of a byte. eg. mask_high_bits(2) == 0b00000011
@@ -363,7 +588,7 @@ pub fn to_mutator(ops: &[GetOperation]) -> Vec<SetOperation> {
             save_mask: !op.mask,
             value_mask: mask_high_bits(num_bits_set(op.mask)) << op.shiftl,
             shiftl: op.shiftr,
-            shiftr: op.shiftl
+            shiftr: op.shiftl,
         });
     }
 
@@ -375,71 +600,325 @@ fn test_to_mutator() {
     type Op = GetOperation;
     type Sop = SetOperation;
 
-    assert_eq!(to_mutator(&[Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }]),
-               vec![Sop { save_mask: 0b01111111, value_mask: 0b00000001, shiftl: 7, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }]),
-               vec![Sop { save_mask: 0b00111111, value_mask: 0b00000011, shiftl: 6, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11100000, shiftl: 0, shiftr: 5 }]),
-               vec![Sop { save_mask: 0b00011111, value_mask: 0b00000111, shiftl: 5, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11110000, shiftl: 0, shiftr: 4 }]),
-               vec![Sop { save_mask: 0b00001111, value_mask: 0b00001111, shiftl: 4, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11111000, shiftl: 0, shiftr: 3 }]),
-               vec![Sop { save_mask: 0b00000111, value_mask: 0b00011111, shiftl: 3, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11111100, shiftl: 0, shiftr: 2 }]),
-               vec![Sop { save_mask: 0b00000011, value_mask: 0b00111111, shiftl: 2, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11111110, shiftl: 0, shiftr: 1 }]),
-               vec![Sop { save_mask: 0b00000001, value_mask: 0b01111111, shiftl: 1, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11111111, shiftl: 0, shiftr: 0 }]),
-               vec![Sop { save_mask: 0b00000000, value_mask: 0b11111111, shiftl: 0, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b11111111, shiftl: 1, shiftr: 0 },
-                            Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }]),
-               vec![Sop { save_mask: 0b00000000, value_mask: 0b111111110, shiftl: 0, shiftr: 1 },
-                    Sop { save_mask: 0b01111111, value_mask: 0b00000001, shiftl: 7, shiftr: 0 }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b10000000,
+                                shiftl: 0,
+                                shiftr: 7,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b01111111,
+                        value_mask: 0b00000001,
+                        shiftl: 7,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11000000,
+                                shiftl: 0,
+                                shiftr: 6,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00111111,
+                        value_mask: 0b00000011,
+                        shiftl: 6,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11100000,
+                                shiftl: 0,
+                                shiftr: 5,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00011111,
+                        value_mask: 0b00000111,
+                        shiftl: 5,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11110000,
+                                shiftl: 0,
+                                shiftr: 4,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00001111,
+                        value_mask: 0b00001111,
+                        shiftl: 4,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111000,
+                                shiftl: 0,
+                                shiftr: 3,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000111,
+                        value_mask: 0b00011111,
+                        shiftl: 3,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111100,
+                                shiftl: 0,
+                                shiftr: 2,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000011,
+                        value_mask: 0b00111111,
+                        shiftl: 2,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111110,
+                                shiftl: 0,
+                                shiftr: 1,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000001,
+                        value_mask: 0b01111111,
+                        shiftl: 1,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111111,
+                                shiftl: 0,
+                                shiftr: 0,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0b11111111,
+                        shiftl: 0,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111111,
+                                shiftl: 1,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b10000000,
+                                shiftl: 0,
+                                shiftr: 7,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0b111111110,
+                        shiftl: 0,
+                        shiftr: 1,
+                    },
+                    Sop {
+                        save_mask: 0b01111111,
+                        value_mask: 0b00000001,
+                        shiftl: 7,
+                        shiftr: 0,
+                    }]);
 
-    assert_eq!(to_mutator(&[Op { mask: 0b11111111, shiftl: 2, shiftr: 0 },
-                            Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }]),
-               vec![Sop { save_mask: 0b00000000, value_mask: 0b1111111100, shiftl: 0, shiftr: 2 },
-                    Sop { save_mask: 0b00111111, value_mask: 0b00000011, shiftl: 6, shiftr: 0 }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b11111111,
+                                shiftl: 2,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11000000,
+                                shiftl: 0,
+                                shiftr: 6,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0b1111111100,
+                        shiftl: 0,
+                        shiftr: 2,
+                    },
+                    Sop {
+                        save_mask: 0b00111111,
+                        value_mask: 0b00000011,
+                        shiftl: 6,
+                        shiftr: 0,
+                    }]);
 
-    assert_eq!(to_mutator(&[Op { mask: 0b01000000, shiftl: 0, shiftr: 6 }]),
-               vec![Sop { save_mask: 0b10111111, value_mask: 0b00000001, shiftl: 6, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01100000, shiftl: 0, shiftr: 5 }]),
-               vec![Sop { save_mask: 0b10011111, value_mask: 0b00000011, shiftl: 5, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01110000, shiftl: 0, shiftr: 4 }]),
-               vec![Sop { save_mask: 0b10001111, value_mask: 0b00000111, shiftl: 4, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111000, shiftl: 0, shiftr: 3 }]),
-               vec![Sop { save_mask: 0b10000111, value_mask: 0b00001111, shiftl: 3, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111100, shiftl: 0, shiftr: 2 }]),
-               vec![Sop { save_mask: 0b10000011, value_mask: 0b00011111, shiftl: 2, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111110, shiftl: 0, shiftr: 1 }]),
-               vec![Sop { save_mask: 0b10000001, value_mask: 0b00111111, shiftl: 1, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111111, shiftl: 0, shiftr: 0 }]),
-               vec![Sop { save_mask: 0b10000000, value_mask: 0b01111111, shiftl: 0, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111111, shiftl: 1, shiftr: 0 },
-                            Op { mask: 0b10000000, shiftl: 0, shiftr: 7 }]),
-               vec![Sop { save_mask: 0b10000000, value_mask: 0b11111110, shiftl: 0, shiftr: 1 },
-                    Sop { save_mask: 0b01111111, value_mask: 0b00000001, shiftl: 7, shiftr: 0 }]);
-    assert_eq!(to_mutator(&[Op { mask: 0b01111111, shiftl: 2, shiftr: 0 },
-                            Op { mask: 0b11000000, shiftl: 0, shiftr: 6 }]),
-               vec![Sop { save_mask: 0b10000000, value_mask: 0b0111111100, shiftl: 0, shiftr: 2 },
-                    Sop { save_mask: 0b00111111, value_mask: 0b00000011, shiftl: 6, shiftr: 0 }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01000000,
+                                shiftl: 0,
+                                shiftr: 6,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10111111,
+                        value_mask: 0b00000001,
+                        shiftl: 6,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01100000,
+                                shiftl: 0,
+                                shiftr: 5,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10011111,
+                        value_mask: 0b00000011,
+                        shiftl: 5,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01110000,
+                                shiftl: 0,
+                                shiftr: 4,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10001111,
+                        value_mask: 0b00000111,
+                        shiftl: 4,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111000,
+                                shiftl: 0,
+                                shiftr: 3,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000111,
+                        value_mask: 0b00001111,
+                        shiftl: 3,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111100,
+                                shiftl: 0,
+                                shiftr: 2,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000011,
+                        value_mask: 0b00011111,
+                        shiftl: 2,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111110,
+                                shiftl: 0,
+                                shiftr: 1,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000001,
+                        value_mask: 0b00111111,
+                        shiftl: 1,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111111,
+                                shiftl: 0,
+                                shiftr: 0,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000000,
+                        value_mask: 0b01111111,
+                        shiftl: 0,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111111,
+                                shiftl: 1,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b10000000,
+                                shiftl: 0,
+                                shiftr: 7,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000000,
+                        value_mask: 0b11111110,
+                        shiftl: 0,
+                        shiftr: 1,
+                    },
+                    Sop {
+                        save_mask: 0b01111111,
+                        value_mask: 0b00000001,
+                        shiftl: 7,
+                        shiftr: 0,
+                    }]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b01111111,
+                                shiftl: 2,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11000000,
+                                shiftl: 0,
+                                shiftr: 6,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b10000000,
+                        value_mask: 0b0111111100,
+                        shiftl: 0,
+                        shiftr: 2,
+                    },
+                    Sop {
+                        save_mask: 0b00111111,
+                        value_mask: 0b00000011,
+                        shiftl: 6,
+                        shiftr: 0,
+                    }]);
 
-    assert_eq!(to_mutator(&[Op { mask: 0b00011111, shiftl: 28, shiftr: 0 },
-                            Op { mask: 0b11111111, shiftl: 20, shiftr: 0 },
-                            Op { mask: 0b11111111, shiftl: 12, shiftr: 0 },
-                            Op { mask: 0b11111111, shiftl: 4, shiftr: 0 },
-                            Op { mask: 0b11110000, shiftl: 0, shiftr: 4 }]),
-               vec![Sop { save_mask: 0b11100000, value_mask: 0x1F0000000, shiftl: 0, shiftr: 28 },
-                    Sop { save_mask: 0b00000000, value_mask: 0x00FF00000, shiftl: 0, shiftr: 20 },
-                    Sop { save_mask: 0b00000000, value_mask: 0x0000FF000, shiftl: 0, shiftr: 12 },
-                    Sop { save_mask: 0b00000000, value_mask: 0x000000FF0, shiftl: 0, shiftr: 4 },
-                    Sop { save_mask: 0b00001111, value_mask: 0x00000000F, shiftl: 4, shiftr: 0 }
-               ]);
+    assert_eq!(to_mutator(&[Op {
+                                mask: 0b00011111,
+                                shiftl: 28,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11111111,
+                                shiftl: 20,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11111111,
+                                shiftl: 12,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11111111,
+                                shiftl: 4,
+                                shiftr: 0,
+                            },
+                            Op {
+                                mask: 0b11110000,
+                                shiftl: 0,
+                                shiftr: 4,
+                            }]),
+               vec![Sop {
+                        save_mask: 0b11100000,
+                        value_mask: 0x1F0000000,
+                        shiftl: 0,
+                        shiftr: 28,
+                    },
+                    Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0x00FF00000,
+                        shiftl: 0,
+                        shiftr: 20,
+                    },
+                    Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0x0000FF000,
+                        shiftl: 0,
+                        shiftr: 12,
+                    },
+                    Sop {
+                        save_mask: 0b00000000,
+                        value_mask: 0x000000FF0,
+                        shiftl: 0,
+                        shiftr: 4,
+                    },
+                    Sop {
+                        save_mask: 0b00001111,
+                        value_mask: 0x00000000F,
+                        shiftl: 4,
+                        shiftr: 0,
+                    }]);
 }
 
 /// Takes a set of operations to get a field in big endian, and converts them to get the field in
 /// little endian.
 pub fn to_little_endian(_ops: Vec<GetOperation>) -> Vec<GetOperation> {
-    // FIXME
-    unimplemented!()
+    let mut ops = _ops.clone();
+    for (op, be_op) in ops.iter_mut().zip(_ops.iter().rev()) {
+	op.shiftl = be_op.shiftl;
+    }
+    ops
 }

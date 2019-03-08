@@ -7,15 +7,16 @@
 // except according to those terms.
 
 #![feature(custom_attribute, plugin)]
-#![plugin(pnet_macros)]
+#![plugin(pnet_macros_plugin)]
 
 extern crate pnet;
 
+// ~ ERROR #[packet] structs must be public
 #[packet]
-struct MustBePub { //~ ERROR #[packet] structs must be public
+struct MustBePub {
     banana: u8,
     #[payload]
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 fn main() {}

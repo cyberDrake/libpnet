@@ -7,13 +7,13 @@
 // except according to those terms.
 
 #![feature(custom_attribute, plugin)]
-#![plugin(pnet_macros)]
+#![plugin(pnet_macros_plugin)]
 
 extern crate pnet;
 
 #[packet] //~ ERROR: #[packet]'s must contain a payload
 pub struct Test {
-    banana: u8
+    banana: u8,
 }
 
 fn main() {}

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2014 Robert Clipsham <robert@octarineparrot.com>
+# Copyright (c) 2014, 2016 Robert Clipsham <robert@octarineparrot.com>
 #
 # Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 # http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -11,70 +11,112 @@
 
 [[ "$VERBOSE" == "1" ]] && set -x
 
-RUSTC=$(which rustc)
-RUSTDOC=$(which rustdoc)
-CARGO=$(which cargo)
-SUDO=$(which sudo)
-SYSTEM=$(uname -s)
+RUSTC="$(which rustc)"
+RUSTDOC="$(which rustdoc)"
+CARGO="$(which cargo)"
+SUDO="$(which sudo)"
+SYSTEM="$(uname -s)"
 TESTER="$CARGO test"
-CC=$(which clang || which gcc)
+CC="$(which clang || which gcc)"
+MACROS_WITH_SYNTEX=0
 
-CARGO_FLAGS=
+if [[ -n "$PNET_FEATURES" ]]; then
+    PNET_CARGO_FLAGS="--no-default-features --features \"$PNET_FEATURES\""
+else
+    PNET_CARGO_FLAGS=
+fi
+
+if [[ -n "$PNET_MACROS_FEATURES" ]]; then
+    PNET_MACROS_CARGO_FLAGS="--no-default-features --features \"$PNET_MACROS_FEATURES\""
+else
+    PNET_MACROS_CARGO_FLAGS=
+fi
 
 # FIXME Need to get interface differently on Windows
-# FIXME Needs to with with iproute2 too
-PNET_TEST_IFACE=$(ifconfig | egrep 'UP| active' | \
-                  perl -pe '/^[A-z0-9]+:([^\n]|\n\t)*status: active/' | \
-                  grep active -B1 | head -n1 | cut -f1 -d:)
+IFCONFIG=$(which ifconfig)
+IPROUTE2=$(which ip)
+
+echo $PNET_MACROS_FEATURES | grep -q with-syntex && MACROS_WITH_SYNTEX=1
+
+if [[ -x "$IFCONFIG" ]]; then
+    PNET_TEST_IFACE=$($IFCONFIG | egrep 'UP| active' | \
+                      perl -pe '/^[A-z0-9]+:([^\n]|\n\t)*status: active/' | \
+                      grep active -B1 | head -n1 | cut -f1 -d:)
+fi
+
+if [[ -z "$PNET_TEST_IFACE" && -x "$IPROUTE2" ]]; then
+    PNET_TEST_IFACE=$($IPROUTE2 link show | grep 'UP' | head -n1 | \
+                      cut -f2 -d: | xargs)
+fi
+
+# https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-net
+if [[ -z "$PNET_TEST_IFACE" && "$SYSTEM" = "Linux" ]]; then
+    for file in /sys/class/net/*/carrier; do
+        tmp=$(cat "$file")
+        if [[ "$tmp" -eq 1 ]]; then
+            PNET_TEST_IFACE=$(echo "$file" | cut -d '/' -f 5)
+            break
+        fi
+    done
+fi
 
 # FIXME Need to link libraries properly on Windows
 build() {
     if [[ -x "$CARGO" ]]; then
-        $CARGO build $CARGO_FLAGS --release
+        "$CARGO" build $PNET_CARGO_FLAGS --release
     else
-        $RUSTC src/lib.rs
+        "$RUSTC" src/lib.rs
     fi
 }
 
 build_doc() {
     if [[ -x "$CARGO" ]]; then
-        $CARGO doc $CARGO_FLAGS
+        "$CARGO" doc $PNET_CARGO_FLAGS
     else
-        $RUSTDOC src/lib.rs -o target/doc --crate-name pnet
+        "$RUSTDOC" src/lib.rs -o target/doc --crate-name pnet
     fi
 }
 
 build_test() {
     if [[ -x "$CARGO" ]]; then
-        $CARGO test --no-run $CARGO_FLAGS
-        $CARGO bench --no-run $CARGO_FLAGS
+        "$CARGO" test --no-run $PNET_CARGO_FLAGS
+        "$CARGO" bench --no-run $PNET_CARGO_FLAGS
     else
-        $RUSTC src/lib.rs --test --out-dir ./target/ -C extra-filename=-no-cargo
+        "$RUSTC" src/lib.rs --test --out-dir ./target/ -C extra-filename=-no-cargo
     fi
 }
 
+# macros tests are only run on nightly, since they depend on compiletest_rs,
+# which needs a nightly Rust
 run_macro_tests() {
     cd pnet_macros &&
-    $CARGO test $CARGO_FLAGS &&
+    sh -c "$CARGO test $PNET_MACROS_CARGO_FLAGS" &&
+    cd ..
+}
+
+run_packet_tests() {
+    cd pnet_packet &&
+    sh -c "$CARGO test" &&
     cd ..
 }
 
 run_test() {
     run_macro_tests &&
+    run_packet_tests &&
     export RUST_TEST_THREADS=1 &&
     case "$SYSTEM" in
         Linux)
-            $SUDO -E LD_LIBRARY_PATH=$LD_LIBRARY_PATH sh -c "cargo build $CARGO_FLAGS --release && \
-                                                             cargo test $CARGO_FLAGS && \
-                                                             cargo bench --no-run $CARGO_FLAGS && \
-                                                             cargo doc $CARGO_FLAGS"
+            "$SUDO" -E LD_LIBRARY_PATH=$LD_LIBRARY_PATH sh -c "cargo build $PNET_CARGO_FLAGS --release && \
+                                                             cargo test $PNET_CARGO_FLAGS && \
+                                                             cargo bench --no-run $PNET_CARGO_FLAGS && \
+                                                             cargo doc $PNET_CARGO_FLAGS"
         ;;
         FreeBSD|Darwin)
             export PNET_TEST_IFACE
-            $SUDO -E DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH bash -c "cargo build $CARGO_FLAGS && \
-                                                                   cargo test $CARGO_FLAGS && \
-                                                                   cargo bench --no-run $CARGO_FLAGS && \
-                                                                   cargo doc $CARGO_FLAGS"
+            "$SUDO" -E DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH bash -c "cargo build $PNET_CARGO_FLAGS && \
+                                                                   cargo test $PNET_CARGO_FLAGS && \
+                                                                   cargo bench --no-run $PNET_CARGO_FLAGS && \
+                                                                   cargo doc $PNET_CARGO_FLAGS"
         ;;
         MINGW*|MSYS*)
             PNET_TEST_IFACE=$PNET_TEST_IFACE RUST_TEST_THREADS=1 $TESTER
@@ -87,7 +129,7 @@ run_test() {
 
 clean() {
     if [[ -x "$CARGO" ]]; then
-        $CARGO clean $CARGO_FLAGS
+        "$CARGO" clean $PNET_CARGO_FLAGS
     else
         rm -fr target
     fi
@@ -95,17 +137,17 @@ clean() {
 
 benchmarks() {
     [[ "$SYSTEM" != "Darwin" ]] && echo warning: C benchmarks only work on OS X
-    $CC -W -Wall -O2 benches/c_receiver.c -o target/benches/c_receiver
-    $CC -W -Wall -O2 benches/c_sender.c -o target/benches/c_sender
+    "$CC" -W -Wall -O2 benches/c_receiver.c -o target/benches/c_receiver
+    "$CC" -W -Wall -O2 benches/c_sender.c -o target/benches/c_sender
 
-    $RUSTC -O benches/rs_receiver.rs --out-dir target/benches -L target/release
-    $RUSTC -O benches/rs_sender.rs --out-dir target/benches -L target/release
+    "$RUSTC" -O benches/rs_receiver.rs --out-dir target/benches -L target/release
+    "$RUSTC" -O benches/rs_sender.rs --out-dir target/benches -L target/release
 }
 
 travis_script() {
     case "$SYSTEM" in
         Linux)
-            $SUDO sed -i 's/secure_path="/secure_path="\/home\/travis\/rust\/bin:/' /etc/sudoers
+            "$SUDO" sed -i 's/secure_path="/secure_path="\/home\/travis\/.cargo\/bin:/' /etc/sudoers
         ;;
         Darwin)
             echo Defaults secure_path = \"$PATH\" | $SUDO tee -a /etc/sudoers
@@ -123,8 +165,9 @@ mkdir -p target/doc
 mkdir -p target/benches
 
 if [[ "$VERBOSE" == "1" ]]; then
-    CARGO_FLAGS="--verbose"
-    TESTER="$TESTER $CARGO_FLAGS"
+    PNET_CARGO_FLAGS="$PNET_CARGO_FLAGS --verbose"
+    PNET_MACROS_CARGO_FLAGS="$PNET_MACROS_CARGO_FLAGS --verbose"
+    TESTER="$TESTER $PNET_CARGO_FLAGS"
 fi
 
 if [[ ! -x "$CARGO" ]]; then
@@ -151,3 +194,4 @@ case "$1" in
         build
     ;;
 esac
+

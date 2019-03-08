@@ -1,26 +1,24 @@
 [package]
-
 name = "pnet_macros"
-version = "0.1.0"
+version = "0.22.0"
 authors = ["Robert Clipsham <robert@octarineparrot.com>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/libpnet/libpnet"
 repository = "https://github.com/libpnet/libpnet"
-documentation = "http://octarineparrot.com/assets/libpnet/doc/pnet/"
-description = "Macros for libpnet"
+description = "Automatic bit manipulation for binary data formats"
 readme = "../README.md"
-keywords = ["networking", "transport", "datalink", "packet", "protocol"]
+keywords = ["networking", "bitfields", "packet", "protocol"]
+categories = ["network-programming", "parsing"]
 
-[lib]
-name = "pnet_macros"
-plugin = true
+[features]
+default = []
+travis = []
 
 [dev-dependencies]
-compiletest_rs = "*"
-
-[dev-dependencies.pnet]
-path = ".."
-version = "*"
+pnet_base = { path = "../pnet_base", version = "0.22.0" }
+pnet_macros_support = { path = "../pnet_macros_support", version = "0.22.0" }
 
 [dependencies]
-regex = "*"
+regex = "1.0.*"
+syntex = "0.42"
+syntex_syntax = "0.42"

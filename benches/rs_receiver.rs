@@ -6,42 +6,37 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// FIXME Remove after 1.0
-#![feature(slice_extras)]
-
-extern crate pnet;
+extern crate pnet_datalink;
 extern crate time;
-
-use pnet::datalink::{datalink_channel};
-use pnet::datalink::DataLinkChannelType::Layer2;
-use pnet::util::{NetworkInterface, get_network_interfaces};
 
 use std::env;
 
 fn main() {
+    use pnet_datalink::Channel::Ethernet;
+
     let iface_name = env::args().nth(1).unwrap();
-    let interface_names_match = |iface: &NetworkInterface| iface.name == iface_name;
 
     // Find the network interface with the provided name
-    let interfaces = get_network_interfaces();
-    let interface = interfaces.into_iter()
-                              .filter(interface_names_match)
-                              .next()
-                              .unwrap();
+    let interfaces = pnet_datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .filter(|iface| iface.name == iface_name)
+        .next()
+        .unwrap();
 
     // Create a channel to receive on
-    let (_, mut rx) = match datalink_channel(&interface, 0, 4096, Layer2) {
-        Ok((tx, rx)) => (tx, rx),
-        Err(e) => panic!("rs_benchmark: unable to create channel: {}", e)
+    let mut rx = match pnet_datalink::channel(&interface, Default::default()) {
+        Ok(Ethernet(_, rx)) => rx,
+        Ok(_) => panic!("rs_sender: unhandled channel type"),
+        Err(e) => panic!("rs_sender: unable to create channel: {}", e),
     };
 
     let mut i = 0usize;
     let mut timestamps = Vec::with_capacity(201);
     timestamps.push(time::precise_time_ns() / 1_000);
 
-    let mut iter = rx.iter();
     loop {
-        match iter.next() {
+        match rx.next() {
             Ok(_) => {
                 i += 1;
                 if i == 1_000_000 {
@@ -51,16 +46,15 @@ fn main() {
                     }
                     i = 0;
                 }
-            },
+            }
             Err(e) => {
-                println!("rs_benchmark: unable to receive packet: {}", e);
+                println!("rs_sender: unable to receive packet: {}", e);
             }
         }
     }
 
     // We received 1_000_000 packets in ((b - a) * 1_000_000) seconds.
-    for (a, b) in timestamps.iter().zip(timestamps.tail().iter()) {
+    for (a, b) in timestamps.iter().zip(timestamps.iter().skip(1)) {
         println!("{}", *b - *a);
     }
 }
-

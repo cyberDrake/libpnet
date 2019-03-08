@@ -9,7 +9,7 @@
 // error-pattern: Only field names, constants, integers, basic arithmetic expressions (+ - * / %) and parentheses are allowed in the "length" attribute
 
 #![feature(custom_attribute, plugin)]
-#![plugin(pnet_macros)]
+#![plugin(pnet_macros_plugin)]
 
 extern crate pnet;
 
@@ -19,7 +19,7 @@ pub struct PacketWithPayload {
     #[length = "banana + 7.5"]
     var_length: Vec<u8>,
     #[payload]
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 fn main() {}

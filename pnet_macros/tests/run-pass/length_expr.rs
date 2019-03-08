@@ -7,7 +7,7 @@
 // except according to those terms.
 
 #![feature(custom_attribute, plugin, slice_bytes, vec_push_all)]
-#![plugin(pnet_macros)]
+#![plugin(pnet_macros_plugin)]
 
 extern crate pnet;
 
@@ -16,7 +16,7 @@ pub struct Key {
     banana: u8,
     #[length = "banana"]
     #[payload]
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 #[packet]
@@ -24,7 +24,7 @@ pub struct AnotherKey {
     banana: u8,
     #[length = "banana + 7"]
     #[payload]
-    payload: Vec<u8>
+    payload: Vec<u8>,
 }
 
 fn main() {}

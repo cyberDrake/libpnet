@@ -6,21 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// FIXME Remove before 1.0
-#![feature(str_char)]
-
 extern crate pnet;
 
-use pnet::datalink::{datalink_channel};
-use pnet::datalink::DataLinkChannelType::Layer2;
-use pnet::packet::{MutablePacket, Packet};
-use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket, EthernetPacket};
-use pnet::packet::ip::{IpNextHeaderProtocols};
-use pnet::packet::ipv4::{MutableIpv4Packet};
-use pnet::packet::ipv4;
-use pnet::packet::udp::{MutableUdpPacket};
-use pnet::packet::udp;
-use pnet::util::get_network_interfaces;
+use pnet::datalink;
+use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
+use pnet::packet::ip::IpNextHeaderProtocols;
+use pnet::packet::ipv4::{self, MutableIpv4Packet};
+use pnet::packet::udp::{self, MutableUdpPacket};
+use pnet::packet::MutablePacket;
 
 use std::env;
 use std::net::Ipv4Addr;
@@ -66,47 +59,48 @@ pub fn build_udp4_packet(packet: &mut [u8], msg: &str) {
 
     {
         let data = udp_header.payload_mut();
-        data[0] = msg.char_at(0) as u8;
-        data[1] = msg.char_at(1) as u8;
-        data[2] = msg.char_at(2) as u8;
-        data[3] = msg.char_at(3) as u8;
-        data[4] = msg.char_at(4) as u8;
+        let msg = msg.as_bytes();
+        data[0] = msg[0];
+        data[1] = msg[1];
+        data[2] = msg[2];
+        data[3] = msg[3];
+        data[4] = msg[4];
     }
 
-    let checksum = udp::ipv4_checksum(&udp_header.to_immutable(),
-                                      source, destination, IpNextHeaderProtocols::Udp);
+    let checksum = udp::ipv4_checksum(&udp_header.to_immutable(), &source, &destination);
     udp_header.set_checksum(checksum);
 }
 
 fn main() {
+    use pnet::datalink::Channel::Ethernet;
+
     let interface_name = env::args().nth(1).unwrap();
     let destination = (&env::args().nth(2).unwrap()[..]).parse().unwrap();
     // Find the network interface with the provided name
-    let interfaces = get_network_interfaces();
-    let interface = interfaces.iter()
-                              .filter(|iface| iface.name == interface_name)
-                              .next()
-                              .unwrap();
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .iter()
+        .filter(|iface| iface.name == interface_name)
+        .next()
+        .unwrap();
 
     // Create a channel to send on
-    let (mut tx, _) = match datalink_channel(interface, 64, 0, Layer2) {
-        Ok((tx, rx)) => (tx, rx),
-        Err(e) => panic!("rs_sender: unable to create channel: {}", e)
+    let mut tx = match datalink::channel(interface, Default::default()) {
+        Ok(Ethernet(tx, _)) => tx,
+        Ok(_) => panic!("rs_sender: unhandled channel type"),
+        Err(e) => panic!("rs_sender: unable to create channel: {}", e),
     };
 
     let mut buffer = [0u8; 64];
-    let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buffer[..]).unwrap();
     {
+        let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buffer[..]).unwrap();
         mut_ethernet_header.set_destination(destination);
         mut_ethernet_header.set_source(interface.mac_address());
         mut_ethernet_header.set_ethertype(EtherTypes::Ipv4);
         build_udp4_packet(mut_ethernet_header.payload_mut(), "rmesg");
     }
 
-    let ethernet_header = EthernetPacket::new(mut_ethernet_header.packet()).unwrap();
-
     loop {
-        tx.send_to(&ethernet_header, None);
+        tx.send_to(&buffer, None);
     }
 }
-
